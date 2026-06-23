@@ -110,9 +110,9 @@ class PorousMediaDataset(Dataset):
             masks = get_masks(edist_scale[-1], self.scales)
 
             temp_images.append(torch.tensor(image, dtype=torch.float32))
-            temp_edist.append([torch.tensor(e, dtype=torch.float32) for e in edist_scale])
-            temp_masks.append([torch.tensor(m, dtype=torch.float32) for m in masks])
-            temp_sims.append([torch.tensor(s, dtype=torch.float32) for s in sim_scale])
+            temp_edist.append([e.detach().clone() for e in edist_scale])
+            temp_masks.append([m.detach().clone() for m in masks])
+            temp_sims.append([s.detach().clone() for s in sim_scale])
 
         self.images = torch.stack(temp_images)
         num_scales = len(temp_masks[0])
@@ -293,7 +293,7 @@ if __name__ == '__main__':
                 num_filters   = 2,   # num of kernels on each layer of the finest model (most expensive)
                 summary       = False # print the model summary
     )
-    download_data("data")     
+    # download_data("data")     
 
     data = PorousMediaDataset("data", num_scales)
     train_data, test_data = torch.utils.data.random_split(data, [0.8, 0.2])
