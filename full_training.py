@@ -12,7 +12,7 @@ from torch.optim import Adam
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.utils.data import Dataset, DataLoader
 
-from network_tools import get_masks, calc_loss
+from network_tools import get_masks
 from network_tools import scale_tensor
 from network import MS_Net
 
@@ -35,6 +35,20 @@ def preprocess_data(data, num_scales=2):
   data = ds_data[::-1] # Returns the reversed list (smallest images first)
 
   return data
+
+def calc_loss(y_pred, y, loss_f, log):
+
+    loss = 0
+    y_var = y[-1].var()
+    for scale, [y_hat,yi] in enumerate(zip(y_pred, y)):
+        loss_scale = loss_f(y_hat,yi)#/y_var
+        loss += loss_scale
+        prefix = f'scale_{scale}_'
+        log[prefix + 'loss'] =  loss_scale.item()
+
+    log['loss'] = loss.item()
+
+    return loss, log
 
 class EarlyStopper:
     """
@@ -102,6 +116,8 @@ class PorousMediaDataset(Dataset):
             image = loadmat(img_path)['bin']
             simulation = loadmat(sim_path)['uz']
 
+            image = image.astype(np.float32)
+            image = -1 * image + 1
             edist = distance_transform_edt(image)
             edist = edist / np.amax(edist)
             edist_scale = preprocess_data(edist, self.scales)
@@ -142,7 +158,7 @@ class PorousMediaDataset(Dataset):
 
 def download_data(root_dir: str, max_workers: int = 5):
     """
-    Downloads all 256x256x256 images with their LBM simulations from "https://web.corral.tacc.utexas.edu/digitalporousmedia/DRP-372/". 
+    Downloads all 256x256x256 images with their LBM simulations from "https://web.corral.tacc.utexas.edu/digitalporousmedia/DRP-372/" (11.3 GB). 
     Metadata file "DRP-372_metadata.json" necessary. 
     """
 
@@ -232,16 +248,15 @@ def train(model: MS_Net,
             y_hat = model(x_sample, mask_sample)
 
             batch_loss, _ = calc_loss(y_hat, y_sample, loss_function, {})
-            scaled_loss = batch_loss / accumulation_steps
-            scaled_loss.backward()
-
-            epoch_loss += batch_loss.item()
+            batch_loss.backward()
+            
+            epoch_loss += batch_loss.item()            
 
             if (batch_idx + 1) % accumulation_steps == 0 or (batch_idx + 1) == len(train_dataloader):
                 optimizer.step()
                 optimizer.zero_grad()
 
-        scheduler.step(epoch_loss)
+        # scheduler.step(epoch_loss)
 
         if early_stopper is not None:
             model.eval()
@@ -259,10 +274,10 @@ def train(model: MS_Net,
 
             arg_val_loss = val_loss / len(val_dataloader)
             if early_stopper.early_stop(arg_val_loss):
+                torch.save(model.state_dict(), 'savedModels/model_weights.pth')
                 break
 
         if epoch % 100 == 0:
-            model.save_model()
             loss_logs.append(epoch_loss)
 
             model.eval()
@@ -282,7 +297,6 @@ def train(model: MS_Net,
             val_loss_logs.append(arg_val_loss)
             print(f'Epoch {epoch + 1}/{epochs} | Val Loss: {arg_val_loss}')
 
-    model.save_model()
     torch.save(model.state_dict(), 'savedModels/model_weights.pth')
     return loss_logs, val_loss_logs
 
@@ -301,7 +315,7 @@ if __name__ == '__main__':
     train_loader = DataLoader(train_data, batch_size=1, shuffle=True)
     test_loader = DataLoader(test_data, batch_size=1, shuffle=True)
 
-    learning_rate = 1e-5
+    learning_rate = 1e-4
     epochs = 2500
     EFFECTIVE_BATCH_SIZE = 4
     optimizer = Adam(net.parameters(), lr=learning_rate)
